@@ -1,24 +1,37 @@
 package be.valuya.hibernate.param.detached.repro;
 
-import io.quarkus.narayana.jta.QuarkusTransaction;
-import io.quarkus.test.junit.QuarkusTest;
-import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityManagerFactory;
+import jakarta.persistence.EntityTransaction;
+import jakarta.persistence.Persistence;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.function.Consumer;
+import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 
-@QuarkusTest
 class DetachedEntityParameterTest {
 
-    @Inject
-    EntityManager entityManager;
+    private static EntityManagerFactory entityManagerFactory;
+
+    @BeforeAll
+    static void setUpEntityManagerFactory() {
+        entityManagerFactory = Persistence.createEntityManagerFactory("repro");
+    }
+
+    @AfterAll
+    static void tearDownEntityManagerFactory() {
+        entityManagerFactory.close();
+    }
 
     @Test
     void reproducesDetachedEntityWithNullVersionDuringAutoFlush() {
-        Long customerId = QuarkusTransaction.requiringNew().call(() -> {
+        Long customerId = withEntityManager(entityManager -> {
             Trustee trustee = new Trustee();
             entityManager.persist(trustee);
 
@@ -29,10 +42,11 @@ class DetachedEntityParameterTest {
             return customer.getId();
         });
 
-        Trustee detachedTrustee = QuarkusTransaction.requiringNew().call(() -> entityManager.find(Customer.class, customerId).getTrustee());
+        Trustee detachedTrustee = withEntityManager(entityManager -> entityManager.find(Customer.class, customerId).getTrustee());
 
-        QuarkusTransaction.requiringNew().run(() -> {
-            entityManager.find(Customer.class, customerId);
+        assertThatCode(() -> runInTransaction(entityManager -> {
+            Customer managedCustomer = entityManager.find(Customer.class, customerId);
+            managedCustomer.setName("updated");
 
             List<Customer> customers = entityManager.createQuery(
                             "select c from Customer c where c.trustee = :trustee",
@@ -42,6 +56,26 @@ class DetachedEntityParameterTest {
                     .getResultList();
 
             assertThat(customers).hasSize(1);
+        })).doesNotThrowAnyException();
+    }
+
+    private static void runInTransaction(Consumer<EntityManager> work) {
+        withEntityManager(entityManager -> {
+            work.accept(entityManager);
+            return null;
         });
+    }
+
+    private static <T> T withEntityManager(Function<EntityManager, T> work) {
+        EntityManager entityManager = entityManagerFactory.createEntityManager();
+        EntityTransaction transaction = entityManager.getTransaction();
+        transaction.begin();
+        try {
+            T result = work.apply(entityManager);
+            transaction.commit();
+            return result;
+        } finally {
+            entityManager.close();
+        }
     }
 }
