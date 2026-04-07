@@ -1,6 +1,8 @@
-# Hibernate detached entity parameter reproducer
+# HHH-20319 Hibernate detached entity parameter reproducer
 
 This project reproduces a `PropertyValueException` thrown during auto-flush when a detached `Trustee` entity is bound as a JPQL parameter while a managed `Customer` is dirty.
+
+See https://hibernate.atlassian.net/browse/HHH-20320
 
 ## Reproducer
 
